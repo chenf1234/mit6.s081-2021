@@ -222,6 +222,7 @@ uchar initcode[] = {
 };
 
 // Set up first user process.
+// 设置好进程状态后，由schedul调用
 void
 userinit(void)
 {
@@ -288,6 +289,7 @@ fork(void)
     return -1;
   }
   np->sz = p->sz;
+  np->trace_mask = p->trace_mask;
 
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
@@ -652,5 +654,19 @@ procdump(void)
       state = "???";
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
+  }
+}
+
+void collect_proc_num(uint64* dst)
+{
+  *dst = 0;
+  struct proc *p;
+
+  for(p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);
+    if(p->state != UNUSED) {
+      (*dst)++;
+    }
+    release(&p->lock);
   }
 }
