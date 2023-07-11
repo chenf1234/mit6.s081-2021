@@ -82,7 +82,7 @@ walk(pagetable_t pagetable, uint64 va, int alloc)
 {
   if(va >= MAXVA)
     panic("walk");
-
+  //多级页表，最多两级，每个页表项为8字节，所以一个页表4096字节能存储512个页表项，也就是9bit
   for(int level = 2; level > 0; level--) {
     pte_t *pte = &pagetable[PX(level, va)];
     if(*pte & PTE_V) {
@@ -431,4 +431,28 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
+}
+
+void 
+addrprint(pagetable_t pagetable, int level){
+  // there are 2^9 = 512 PTEs in a page table.
+  for(int i = 0; i < 512; i++){
+    pte_t pte = pagetable[i];
+    uint64 child = PTE2PA(pte);
+    if((pte & PTE_V) && (pte & (PTE_R|PTE_W|PTE_X)) == 0){
+      for(int j=1;j<level;j++)printf(".. ");
+      printf("..%d: pte %p pa %p\n", i, pte, child);
+      addrprint((pagetable_t)child, level + 1);
+    } else if(pte & PTE_V){
+      for(int j=1;j<level;j++)printf(".. ");
+      printf("..%d: pte %p pa %p\n", i, pte, child);
+    }
+  }
+}
+
+void 
+vmprint(pagetable_t pagetable)
+{
+  printf("page table %p\n", pagetable);
+  addrprint(pagetable, 1);
 }
