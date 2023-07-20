@@ -13,6 +13,8 @@ pagetable_t kernel_pagetable;
 
 extern char etext[];  // kernel.ld sets this to end of kernel code.
 
+extern uint8 page_count[];
+
 extern char trampoline[]; // trampoline.S
 
 // Make a direct-map page table for the kernel.
@@ -303,7 +305,7 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   pte_t *pte;
   uint64 pa, i;
   uint flags;
-  char *mem;
+  //char *mem;
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
@@ -311,14 +313,20 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
     if((*pte & PTE_V) == 0)
       panic("uvmcopy: page not present");
     pa = PTE2PA(*pte);
+    *pte &= (~PTE_W);
+    *pte |= PTE_COW;
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
+    // if((mem = kalloc()) == 0)
+    //   goto err;
+    // memmove(mem, (char*)pa, PGSIZE);
+    // if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
+    //   kfree(mem);
+    //   goto err;
+    // }
+    if(mappages(new, i, PGSIZE, (uint64)pa, flags) != 0){
       goto err;
     }
+    incref(pa);
   }
   return 0;
 
@@ -350,9 +358,19 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
-    pa0 = walkaddr(pagetable, va0);
-    if(pa0 == 0)
+    if (va0 >= MAXVA)
       return -1;
+    pte_t* pte = walk(pagetable, va0, 0);
+    if (pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0)
+      return -1;
+    if (*pte & PTE_COW) {
+      // process cow page
+      if (cowfault(pagetable, va0) < 0) {
+        printf("cowfault < 0\n");
+        return -1;
+      }
+    }
+    pa0 = PTE2PA(*pte);
     n = PGSIZE - (dstva - va0);
     if(n > len)
       n = len;
@@ -363,6 +381,38 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
     dstva = va0 + PGSIZE;
   }
   return 0;
+}
+
+int 
+cowfault(pagetable_t pagetable, uint64 va)
+{   
+  if (va >= MAXVA) {
+    return -1;
+  }
+    pte_t* pte = walk(pagetable, va, 0);
+    uint64 pa = PTE2PA(*pte);
+    if (pte == 0 || !(*pte & PTE_COW)) {
+      printf("not cow page\n");
+      return -1;
+    }
+    
+      if(page_count[pa/PGSIZE]>=2){
+        page_count[pa/PGSIZE]--;
+        int flag = PTE_FLAGS(*pte);
+        char* mem;
+        if((mem = kalloc())==0){
+          return -1;
+        }
+        memmove(mem, (char*)(PTE2PA(*pte)), PGSIZE);
+        flag |= PTE_W;
+        flag &= (~PTE_COW);
+        *pte = PA2PTE((uint64)mem) | flag;
+      }
+      else{
+        *pte|=PTE_W;
+        *pte &= (~PTE_COW);
+      }
+    return 0;
 }
 
 // Copy from user to kernel.

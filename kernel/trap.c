@@ -8,6 +8,7 @@
 
 struct spinlock tickslock;
 uint ticks;
+extern uint8 page_count[];
 
 extern char trampoline[], uservec[], userret[];
 
@@ -65,6 +66,12 @@ usertrap(void)
     intr_on();
 
     syscall();
+  } else if(r_scause() == 15) {
+    uint64 va = r_stval();
+    if(cowfault(p->pagetable, va)<0){
+      p->killed=1;
+      exit(-1);
+    }
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {

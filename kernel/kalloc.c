@@ -10,6 +10,7 @@
 #include "defs.h"
 
 void freerange(void *pa_start, void *pa_end);
+uint8 page_count[PHYSTOP / PGSIZE + 1];
 
 extern char end[]; // first address after kernel.
                    // defined by kernel.ld.
@@ -35,8 +36,10 @@ freerange(void *pa_start, void *pa_end)
 {
   char *p;
   p = (char*)PGROUNDUP((uint64)pa_start);
-  for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE)
+  for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE){
+    page_count[(uint64)p / PGSIZE] = 1;
     kfree(p);
+  }
 }
 
 // Free the page of physical memory pointed at by v,
@@ -46,6 +49,14 @@ freerange(void *pa_start, void *pa_end)
 void
 kfree(void *pa)
 {
+  acquire(&kmem.lock);
+  int idx = (uint64)pa/PGSIZE;
+  --page_count[idx];
+  if(page_count[idx]>0){
+    release(&kmem.lock);
+    return;
+  }
+  release(&kmem.lock);
   struct run *r;
 
   if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
@@ -72,11 +83,21 @@ kalloc(void)
 
   acquire(&kmem.lock);
   r = kmem.freelist;
-  if(r)
+  if(r){
     kmem.freelist = r->next;
+    page_count[(uint64)r/PGSIZE]=1;
+  }
   release(&kmem.lock);
 
   if(r)
     memset((char*)r, 5, PGSIZE); // fill with junk
   return (void*)r;
+}
+
+void
+incref(uint64 pa) {
+  int pn = pa / PGSIZE;
+  acquire(&kmem.lock);
+  page_count[pn]++;
+  release(&kmem.lock);
 }
